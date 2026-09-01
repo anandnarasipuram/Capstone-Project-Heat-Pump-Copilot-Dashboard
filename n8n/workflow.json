@@ -1,0 +1,531 @@
+{
+  "name": "Heat Pump Field Commissioning & Connectivity Triage (Telegram)",
+  "nodes": [
+    {
+      "id": "73942550-3036-4f7f-b0f5-524ebf7e804e",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -440,
+        300
+      ],
+      "parameters": {
+        "updates": [
+          "message"
+        ]
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "1",
+          "name": "Heat Pump Copilot Bot"
+        }
+      }
+    },
+    {
+      "id": "c123d7a3-d6bc-400f-8602-52a960ff2352",
+      "name": "Parse Installer Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -200,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Turn a free-form Telegram message into the same ticket shape the\n// classification logic expects. Telegram gives us raw chat text, not the\n// structured {model, firmware_version, installer_type} fields a real\n// installer app would send — those default to \"not provided via chat\" here.\n// A production version would ask one follow-up question, or have the\n// installer app tag the chat with equipment context (e.g. a QR scan at the\n// unit) instead of relying on free text for that part.\nconst msg = $json.message;\nconst text = (msg && msg.text) || '';\n\n// Pull out a known-style fault code if the installer happened to mention one\n// (e.g. \"error code E4\", \"CONN-01\") — same codes as the lookup table.\nconst codeMatch = text.match(/\\b(E\\d{1,2}|CONN-\\d{2})\\b/i);\nconst faultCode = codeMatch ? codeMatch[1].toUpperCase() : '';\n\nreturn {\n  json: {\n    chat_id: msg.chat.id,\n    telegram_user: (msg.from && (msg.from.username || msg.from.first_name)) || 'unknown',\n    model: 'not provided via chat',\n    firmware_version: 'not provided via chat',\n    installer_type: 'not provided via chat',\n    fault_code: faultCode,\n    reported_symptom: text\n  }\n};"
+      }
+    },
+    {
+      "id": "40d9ff4f-f8ed-4b9d-b0a9-85f0195c2527",
+      "name": "Lookup Known Fault Code",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        40,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Deterministic fault-code lookup — mirrors the archetypes in\n// data/synthetic_fault_dataset.csv (generate_synthetic_fault_dataset.js).\n// Known structured fault codes skip the LLM entirely: fast, free, and\n// auditable. Unknown/blank codes (typically connectivity or installer-error\n// reports, which rarely carry a formal code) fall through to the LLM step.\nconst KNOWN_CODES = {\n  E4: {\n    category: 'hardware_fault',\n    fix_or_escalation_action: 'Escalate to hardware service technician (compressor/refrigerant circuit inspection). Not resolvable by app/firmware update.'\n  },\n  E7: {\n    category: 'hardware_fault',\n    fix_or_escalation_action: 'Escalate to hardware service technician (compressor/refrigerant circuit inspection). Not resolvable by app/firmware update.'\n  },\n  E12: {\n    category: 'hardware_fault',\n    fix_or_escalation_action: 'Escalate to hardware service technician (compressor/refrigerant circuit inspection). Not resolvable by app/firmware update.'\n  },\n  E2: {\n    category: 'installer_error',\n    fix_or_escalation_action: 'Correct commissioning step per install checklist (wiring, pressure fill, sensor orientation, or valve position); no manufacturer escalation needed.'\n  },\n  'CONN-01': {\n    category: 'connectivity_issue',\n    fix_or_escalation_action: 'Re-pair the control unit via the installer app, confirm router 2.4GHz band is enabled, and check smart-meter-gateway certificate status. No hardware visit required.'\n  }\n};\n\nconst item = $input.item.json;\nconst code = String(item.fault_code || '').trim().toUpperCase();\nconst match = KNOWN_CODES[code];\n\nreturn {\n  json: {\n    ...item,\n    matched: !!match,\n    category: match ? match.category : null,\n    fix_or_escalation_action: match ? match.fix_or_escalation_action : null,\n    confidence: match ? 1 : null,\n    source: match ? 'lookup' : null\n  }\n};"
+      }
+    },
+    {
+      "id": "a702a367-e945-4afa-9c3b-9f2ddafe3e1f",
+      "name": "Known Fault Code?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        280,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "9b334c19-7174-447c-b7e9-0708c2c849dc",
+              "leftValue": "={{ $json.matched }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "fda91cdd-d6c8-4a81-b615-a6f07316edc9",
+      "name": "Classify via OpenAI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        520,
+        420
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.OPENAI_API_KEY }}"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'gpt-4o-mini', response_format: { type: 'json_object' }, messages: [ { role: 'system', content: \"You are a triage assistant for a heat pump manufacturer's field installers in Germany. An installer has reported a symptom that has no recognized structured fault code, so you must classify it from free text.\\n\\nClassify the report into exactly one category: hardware_fault, connectivity_issue, or installer_error.\\n- hardware_fault: the physical unit (compressor, refrigerant circuit, electrical component) is likely broken and needs a technician visit.\\n- connectivity_issue: the unit itself is likely fine; the HEMS app/pairing/network connection is the problem.\\n- installer_error: a commissioning step (wiring, pressure fill, sensor orientation, valve position) was likely done incorrectly and can be corrected without escalation.\\n\\nThen provide fix_or_escalation_action: for hardware_fault, an escalation instruction (never step-by-step repair instructions for refrigerant/electrical work — always escalate to a certified technician); for the other two categories, concrete fix guidance the installer can act on immediately.\\n\\nRespond with ONLY minified JSON, no other text: {\\\"category\\\":\\\"...\\\",\\\"fix_or_escalation_action\\\":\\\"...\\\",\\\"confidence\\\":0.0}\\nconfidence is your own estimate (0 to 1) of how certain this classification is from the text alone.\" }, { role: 'user', content: 'Model: ' + $json.model + '\\nFirmware: ' + $json.firmware_version + '\\nInstaller type: ' + $json.installer_type + '\\nFault code: ' + ($json.fault_code || 'none') + '\\nReported symptom: ' + $json.reported_symptom } ] }) }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "af5e5bfd-3718-4e5e-9b3c-ba980bbe2e06",
+      "name": "Parse OpenAI Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        760,
+        420
+      ],
+      "parameters": {
+        "jsCode": "// Parse the OpenAI Chat Completions response and recover the original\n// ticket fields (the HTTP Request node's output replaces $json with\n// OpenAI's response body, so the source ticket fields are pulled back from\n// the lookup step).\nconst original = $('Lookup Known Fault Code').item.json;\nconst response = $input.item.json;\n\nlet parsed;\ntry {\n  const text = response.choices[0].message.content;\n  parsed = JSON.parse(text);\n} catch (err) {\n  // Fail safe: if the model output can't be parsed, escalate rather than\n  // guess — never silently default to a \"no action needed\" outcome.\n  parsed = {\n    category: 'hardware_fault',\n    fix_or_escalation_action: 'Could not parse model output — escalating to a senior technician as a safe default.',\n    confidence: 0\n  };\n}\n\nreturn {\n  json: {\n    ...original,\n    category: parsed.category,\n    fix_or_escalation_action: parsed.fix_or_escalation_action,\n    confidence: parsed.confidence,\n    source: 'llm'\n  }\n};"
+      }
+    },
+    {
+      "id": "fc78daeb-14a0-4fbd-9d2c-3fadc0729040",
+      "name": "Is Hardware Fault?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "6b825cec-5424-4033-8a59-e32aebfabff1",
+              "leftValue": "={{ $json.category }}",
+              "rightValue": "hardware_fault",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "1c6aa6cf-5412-43d0-898b-74732af5df78",
+      "name": "Build Escalation Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1240,
+        200
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f4dc19a6-8c0f-40e9-91c8-ba554a043e78",
+              "name": "chat_id",
+              "value": "={{ $json.chat_id }}",
+              "type": "string"
+            },
+            {
+              "id": "27636ef3-183b-4e40-9a27-328795ffb9ef",
+              "name": "status",
+              "value": "escalated",
+              "type": "string"
+            },
+            {
+              "id": "1776d6f2-f332-4fca-8572-5c55cdd1f9c4",
+              "name": "category",
+              "value": "={{ $json.category }}",
+              "type": "string"
+            },
+            {
+              "id": "33436bea-6526-4d41-8441-92790151547b",
+              "name": "model",
+              "value": "={{ $json.model }}",
+              "type": "string"
+            },
+            {
+              "id": "8e474517-d3de-4eaa-95d0-86a0096c51d5",
+              "name": "fault_code",
+              "value": "={{ $json.fault_code }}",
+              "type": "string"
+            },
+            {
+              "id": "8b413664-1863-4212-9521-9b07252071f9",
+              "name": "source",
+              "value": "={{ $json.source }}",
+              "type": "string"
+            },
+            {
+              "id": "5563b86b-d489-4b8f-bc9b-cdb528aabd42",
+              "name": "confidence",
+              "value": "={{ $json.confidence }}",
+              "type": "number"
+            },
+            {
+              "id": "7c5f74d5-46ef-4380-8d39-cff05ce00076",
+              "name": "message",
+              "value": "={{ 'Escalation required: ' + $json.fix_or_escalation_action + ' — AI-suggested triage, confirm before acting.' }}",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "8d7d347f-b25f-4402-a4a4-470b46cf12bb",
+      "name": "Build Fix Guidance Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1240,
+        400
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1159223b-3fe7-451f-868d-7594df08ae71",
+              "name": "chat_id",
+              "value": "={{ $json.chat_id }}",
+              "type": "string"
+            },
+            {
+              "id": "0ebe5e4c-607b-4457-b7ae-5eaa12f2ad25",
+              "name": "status",
+              "value": "resolved_guidance",
+              "type": "string"
+            },
+            {
+              "id": "0bc74163-32e7-4700-a45c-8a4a3a5d61f0",
+              "name": "category",
+              "value": "={{ $json.category }}",
+              "type": "string"
+            },
+            {
+              "id": "c644129d-bc61-421d-b6f2-3200ac1e7c64",
+              "name": "model",
+              "value": "={{ $json.model }}",
+              "type": "string"
+            },
+            {
+              "id": "6ab89661-590d-40b0-94e6-887750cf2159",
+              "name": "fault_code",
+              "value": "={{ $json.fault_code }}",
+              "type": "string"
+            },
+            {
+              "id": "4ff3814d-5479-4d4e-a7d1-4ab4eddd3043",
+              "name": "source",
+              "value": "={{ $json.source }}",
+              "type": "string"
+            },
+            {
+              "id": "1d45fe0a-72f6-4cee-941e-f8f9937911b8",
+              "name": "confidence",
+              "value": "={{ $json.confidence }}",
+              "type": "number"
+            },
+            {
+              "id": "f12d91a8-a5ee-4fc7-805e-1ad8fdc9bf25",
+              "name": "message",
+              "value": "={{ 'Suggested fix: ' + $json.fix_or_escalation_action + ' — AI-suggested triage, confirm before acting.' }}",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "6c46dc44-59e2-4a39-9d4d-6e602343ae83",
+      "name": "Log to Monitoring (LangSmith)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1480,
+        300
+      ],
+      "parameters": {},
+      "notes": "Placeholder for the LangSmith monitoring hook: in production this posts {category, source, confidence, fault_code, model} to a LangSmith run/trace so every triage decision is auditable. See langsmith/ for the Round 1 trace sample and monitoring notes."
+    },
+    {
+      "id": "f812b482-4d33-4e93-9820-cd50faa68844",
+      "name": "Format Telegram Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1720,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Format the classification result as a short Telegram-friendly reply.\nconst item = $json;\nconst emoji = item.status === 'escalated' ? '\\u{1F527}' : '\\u2705'; // wrench vs check\nconst categoryLabel = {\n  hardware_fault: 'Hardware fault',\n  connectivity_issue: 'HEMS connectivity issue',\n  installer_error: 'Installer/commissioning error'\n}[item.category] || item.category;\n\nconst lines = [\n  emoji + ' *' + categoryLabel + '*',\n  '',\n  item.message,\n  '',\n  '_Source: ' + (item.source === 'lookup' ? 'fault-code lookup' : 'AI classification') +\n    (item.confidence != null && item.confidence !== '' ? ' (confidence ' + item.confidence + ')' : '') + '_'\n];\n\nreturn {\n  json: {\n    chat_id: item.chat_id,\n    reply_text: lines.join('\\n')\n  }\n};"
+      }
+    },
+    {
+      "id": "cda4eef1-fded-4ea7-838c-63f0b843d336",
+      "name": "Send Telegram Reply",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1960,
+        300
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.reply_text }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "1",
+          "name": "Heat Pump Copilot Bot"
+        }
+      }
+    },
+    {
+      "id": "036ebeaf-907a-4e5b-9db7-a0a46551046b",
+      "name": "Sticky Note - Classify",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        20,
+        120
+      ],
+      "parameters": {
+        "width": 780,
+        "height": 160,
+        "content": "## Step 1 — Classify\nKnown structured fault codes (E4/E7/E12/E2/CONN-01) are resolved by a deterministic lookup — fast, free, fully auditable. Free-text symptoms with no recognized code fall through to OpenAI for classification. This mirrors the archetypes in `data/synthetic_fault_dataset.csv`."
+      }
+    },
+    {
+      "id": "ad0f8d7b-2a2c-458e-92e0-e782a39999f7",
+      "name": "Sticky Note - Route",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        980,
+        120
+      ],
+      "parameters": {
+        "width": 560,
+        "height": 160,
+        "content": "## Step 2 — Route\nhardware_fault → escalation to a certified technician.\nconnectivity_issue / installer_error → immediate fix guidance.\nEvery response is labeled 'AI-suggested triage — confirm before acting' (human-in-the-loop, EU AI Act limited-risk framing)."
+      }
+    },
+    {
+      "id": "d84451ed-a6f4-4114-bbfb-bea00be3bf27",
+      "name": "Sticky Note - Scope",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -440,
+        460
+      ],
+      "parameters": {
+        "width": 620,
+        "height": 180,
+        "content": "## Round 1 POC scope\nThis is decision support, never an autonomous fix authority — it never issues unsupervised electrical/refrigerant repair steps. Telegram gives free text only, so model/firmware/installer-type default to 'not provided via chat' — see workflow_documentation.md for the production fix. Full safety framing: research/opportunities_risks.md."
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Parse Installer Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Installer Message": {
+      "main": [
+        [
+          {
+            "node": "Lookup Known Fault Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lookup Known Fault Code": {
+      "main": [
+        [
+          {
+            "node": "Known Fault Code?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Known Fault Code?": {
+      "main": [
+        [
+          {
+            "node": "Is Hardware Fault?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Classify via OpenAI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify via OpenAI": {
+      "main": [
+        [
+          {
+            "node": "Parse OpenAI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse OpenAI Response": {
+      "main": [
+        [
+          {
+            "node": "Is Hardware Fault?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Hardware Fault?": {
+      "main": [
+        [
+          {
+            "node": "Build Escalation Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Fix Guidance Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Escalation Response": {
+      "main": [
+        [
+          {
+            "node": "Log to Monitoring (LangSmith)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Fix Guidance Response": {
+      "main": [
+        [
+          {
+            "node": "Log to Monitoring (LangSmith)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log to Monitoring (LangSmith)": {
+      "main": [
+        [
+          {
+            "node": "Format Telegram Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Telegram Reply": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "note": "Round 1 capstone POC. Import into n8n, connect a Telegram Bot credential (token from @BotFather) to both Telegram nodes, and set OPENAI_API_KEY as an environment variable before running. See n8n/workflow_documentation.md."
+  }
+}

@@ -1,0 +1,4 @@
+# Used by langsmith/run_trace_sample.py (LangSmith monitoring sample).
+python-dotenv>=1.0.1
+langsmith>=0.1.140
+openai>=1.54.0
