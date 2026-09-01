@@ -7,6 +7,7 @@ Shape AI capstone project: **Heat Pump Copilot Dashboard** (Home Energy & HVAC s
 ```
 .
 ├── data/                      # Raw/sample data used for research & dashboard
+│   └── manuals/                   # Manual knowledge base grounding the n8n copilot (see manuals/README.md)
 ├── research/
 │   ├── sector_research.md         # Market/industry overview
 │   ├── opportunities_risks.md     # Opportunities & risks for the use case
@@ -35,7 +36,7 @@ Shape AI capstone project: **Heat Pump Copilot Dashboard** (Home Energy & HVAC s
 
 ## Status
 
-In progress. Done: research pack (sector research, opportunities/risks, 3 candidate use cases spanning reactive/preventive/predictive lifecycle stages, preliminary analysis), dataset selection + synthetic fault dataset, cost/timeline estimate, Tableau dashboard (5 market-context sheets + 7 stakeholder operations-metrics sheets), one-page pitch brief for instructor review, n8n fault-triage POC on Telegram (deterministic lookup + OpenAI classification fallback), LangSmith monitoring sample (trace script + dataset/experiment, run and verified end-to-end — 5/5 classifications correct, real experiment link in langsmith/monitoring_notes.md). Pending: full presentation deck and the post-presentation `feedback/round1_decision.md`.
+In progress. Done: research pack (sector research, opportunities/risks, 3 candidate use cases spanning reactive/preventive/predictive lifecycle stages, preliminary analysis), dataset selection + synthetic fault dataset, cost/timeline estimate, Tableau dashboard (5 market-context sheets + 7 stakeholder operations-metrics sheets), one-page pitch brief for instructor review, n8n fault-triage POC on Telegram (deterministic lookup — now including 8 real Vaillant fault codes — plus OpenAI classification fallback grounded in a manual knowledge base, see `data/manuals/`), LangSmith monitoring sample (trace script + dataset/experiment, run and verified end-to-end — 5/5 classifications correct, real experiment link in langsmith/monitoring_notes.md). Pending: live import/test of the n8n workflow against a real Telegram bot, a full slide presentation deck (beyond the one-pager), and the post-presentation `feedback/round1_decision.md`.
 
 ## Setup
 
