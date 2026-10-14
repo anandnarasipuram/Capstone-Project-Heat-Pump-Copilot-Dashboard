@@ -83,7 +83,7 @@
     },
     {
       "id": "fda91cdd-d6c8-4a81-b615-a6f07316edc9",
-      "name": "Classify via OpenAI",
+      "name": "Classify via Cohere",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
@@ -92,13 +92,13 @@
       ],
       "parameters": {
         "method": "POST",
-        "url": "https://api.openai.com/v1/chat/completions",
+        "url": "https://api.cohere.com/v2/chat",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "Authorization",
-              "value": "=Bearer {{ $env.OPENAI_API_KEY }}"
+              "value": "=Bearer {{ $env.COHERE_API_KEY }}"
             },
             {
               "name": "content-type",
@@ -108,13 +108,13 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ model: 'gpt-4o-mini', response_format: { type: 'json_object' }, messages: [ { role: 'system', content: \"You are a triage assistant for a heat pump manufacturer's field installers in Germany. An installer has reported a symptom that has no recognized structured fault code, so you must classify it from free text.\\n\\nClassify the report into exactly one category: hardware_fault, connectivity_issue, or installer_error.\\n- hardware_fault: the physical unit (compressor, refrigerant circuit, electrical component) is likely broken and needs a technician visit.\\n- connectivity_issue: the unit itself is likely fine; the HEMS app/pairing/network connection is the problem.\\n- installer_error: a commissioning step (wiring, pressure fill, sensor orientation, valve position) was likely done incorrectly and can be corrected without escalation.\\n\\nIf manual excerpts are provided below, treat them as authoritative documented guidance and ground your classification and fix_or_escalation_action in them — prefer their specific instructions over generic assumptions. If no excerpts are relevant or none are provided, classify from the symptom text alone as before.\\n\\nThen provide fix_or_escalation_action: for hardware_fault, an escalation instruction (never step-by-step repair instructions for refrigerant/electrical work — always escalate to a certified technician); for the other two categories, concrete fix guidance the installer can act on immediately.\\n\\nRespond in the same language the installer used in their message (e.g. reply in German if they wrote in German); reason in English internally but write fix_or_escalation_action in the installer's language.\\n\\nRespond with ONLY minified JSON, no other text: {\\\"category\\\":\\\"...\\\",\\\"fix_or_escalation_action\\\":\\\"...\\\",\\\"confidence\\\":0.0}\\nconfidence is your own estimate (0 to 1) of how certain this classification is from the text alone.\" }, { role: 'user', content: 'Model: ' + $json.model + '\\\\nFirmware: ' + $json.firmware_version + '\\\\nInstaller type: ' + $json.installer_type + '\\\\nFault code: ' + ($json.fault_code || 'none') + '\\\\nReported symptom: ' + $json.reported_symptom + '\\\\n\\\\nManual excerpts (may be none):\\\\n' + ($json.manual_context || 'none') } ] }) }}",
+        "jsonBody": "={{ JSON.stringify({ model: 'command-a-03-2025', response_format: { type: 'json_object' }, messages: [ { role: 'system', content: \"You are a triage assistant for a heat pump manufacturer's field installers in Germany. An installer has reported a symptom that has no recognized structured fault code, so you must classify it from free text.\\n\\nClassify the report into exactly one category: hardware_fault, connectivity_issue, or installer_error.\\n- hardware_fault: the physical unit (compressor, refrigerant circuit, electrical component) is likely broken and needs a technician visit.\\n- connectivity_issue: the unit itself is likely fine; the HEMS app/pairing/network connection is the problem.\\n- installer_error: a commissioning step (wiring, pressure fill, sensor orientation, valve position) was likely done incorrectly and can be corrected without escalation.\\n\\nIf manual excerpts are provided below, treat them as authoritative documented guidance and ground your classification and fix_or_escalation_action in them — prefer their specific instructions over generic assumptions. If no excerpts are relevant or none are provided, classify from the symptom text alone as before.\\n\\nThen provide fix_or_escalation_action: for hardware_fault, an escalation instruction (never step-by-step repair instructions for refrigerant/electrical work — always escalate to a certified technician); for the other two categories, concrete fix guidance the installer can act on immediately.\\n\\nRespond in the same language the installer used in their message (e.g. reply in German if they wrote in German); reason in English internally but write fix_or_escalation_action in the installer's language.\\n\\nRespond with ONLY minified JSON, no other text: {\\\"category\\\":\\\"...\\\",\\\"fix_or_escalation_action\\\":\\\"...\\\",\\\"confidence\\\":0.0}\\nconfidence is your own estimate (0 to 1) of how certain this classification is from the text alone.\" }, { role: 'user', content: 'Model: ' + $json.model + '\\\\nFirmware: ' + $json.firmware_version + '\\\\nInstaller type: ' + $json.installer_type + '\\\\nFault code: ' + ($json.fault_code || 'none') + '\\\\nReported symptom: ' + $json.reported_symptom + '\\\\n\\\\nManual excerpts (may be none):\\\\n' + ($json.manual_context || 'none') } ] }) }}",
         "options": {}
       }
     },
     {
       "id": "af5e5bfd-3718-4e5e-9b3c-ba980bbe2e06",
-      "name": "Parse OpenAI Response",
+      "name": "Parse Cohere Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
@@ -122,7 +122,7 @@
         480
       ],
       "parameters": {
-        "jsCode": "// Parse the OpenAI Chat Completions response and recover the original\n// ticket fields (the HTTP Request node's output replaces $json with\n// OpenAI's response body, so the source ticket fields — including\n// manual_context/manual_sources from the retrieval step — are pulled back\n// from 'Retrieve Manual Context').\nconst original = $('Retrieve Manual Context').item.json;\nconst response = $input.item.json;\n\nlet parsed;\ntry {\n  const text = response.choices[0].message.content;\n  parsed = JSON.parse(text);\n} catch (err) {\n  // Fail safe: if the model output can't be parsed, escalate rather than\n  // guess — never silently default to a \"no action needed\" outcome.\n  parsed = {\n    category: 'hardware_fault',\n    fix_or_escalation_action: 'Could not parse model output — escalating to a senior technician as a safe default.',\n    confidence: 0\n  };\n}\n\nreturn {\n  json: {\n    ...original,\n    category: parsed.category,\n    fix_or_escalation_action: parsed.fix_or_escalation_action,\n    confidence: parsed.confidence,\n    source: 'llm'\n  }\n};"
+        "jsCode": "// Parse the Cohere v2 Chat response and recover the original\n// ticket fields (the HTTP Request node's output replaces $json with\n// Cohere's response body, so the source ticket fields — including\n// manual_context/manual_sources from the retrieval step — are pulled back\n// from 'Retrieve Manual Context').\nconst original = $('Retrieve Manual Context').item.json;\nconst response = $input.item.json;\n\nlet parsed;\ntry {\n  const text = response.message.content[0].text;\n  parsed = JSON.parse(text);\n} catch (err) {\n  // Fail safe: if the model output can't be parsed, escalate rather than\n  // guess — never silently default to a \"no action needed\" outcome.\n  parsed = {\n    category: 'hardware_fault',\n    fix_or_escalation_action: 'Could not parse model output — escalating to a senior technician as a safe default.',\n    confidence: 0\n  };\n}\n\nreturn {\n  json: {\n    ...original,\n    category: parsed.category,\n    fix_or_escalation_action: parsed.fix_or_escalation_action,\n    confidence: parsed.confidence,\n    source: 'llm'\n  }\n};"
       }
     },
     {
@@ -361,7 +361,7 @@
       "parameters": {
         "width": 980,
         "height": 160,
-        "content": "## Step 1 — Classify\nKnown fault codes (5 synthetic + real Vaillant codes like F.532/F.9998) are resolved by a deterministic lookup — fast, free, fully auditable. Free-text symptoms with no recognized code get a manual-grounded retrieval pass (Retrieve Manual Context), then OpenAI classification. See `data/manuals/` for the sourced manual excerpts and `data/synthetic_fault_dataset.csv` for the original archetypes."
+        "content": "## Step 1 — Classify\nKnown fault codes (5 synthetic + real Vaillant codes like F.532/F.9998) are resolved by a deterministic lookup — fast, free, fully auditable. Free-text symptoms with no recognized code get a manual-grounded retrieval pass (Retrieve Manual Context), then Cohere classification. See `data/manuals/` for the sourced manual excerpts and `data/synthetic_fault_dataset.csv` for the original archetypes."
       }
     },
     {
@@ -475,18 +475,18 @@
         ]
       ]
     },
-    "Classify via OpenAI": {
+    "Classify via Cohere": {
       "main": [
         [
           {
-            "node": "Parse OpenAI Response",
+            "node": "Parse Cohere Response",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Parse OpenAI Response": {
+    "Parse Cohere Response": {
       "main": [
         [
           {
@@ -563,7 +563,7 @@
       "main": [
         [
           {
-            "node": "Classify via OpenAI",
+            "node": "Classify via Cohere",
             "type": "main",
             "index": 0
           }
@@ -577,6 +577,6 @@
   },
   "meta": {
     "templateCredsSetupCompleted": false,
-    "note": "Round 1 capstone POC. Import into n8n, connect a Telegram Bot credential (token from @BotFather) to both Telegram nodes, and set OPENAI_API_KEY as an environment variable before running. See n8n/workflow_documentation.md."
+    "note": "Round 1 capstone POC. Import into n8n, connect a Telegram Bot credential (token from @BotFather) to both Telegram nodes, and set COHERE_API_KEY as an environment variable before running. See n8n/workflow_documentation.md."
   }
 }

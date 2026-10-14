@@ -1,10 +1,10 @@
 # LangSmith Monitoring Sample
 
-> Script: [`run_trace_sample.py`](run_trace_sample.py) — run it yourself with your own `OPENAI_API_KEY` and `LANGSMITH_API_KEY` to generate real traces; see **How to run** below.
+> Script: [`run_trace_sample.py`](run_trace_sample.py) — run it yourself with your own `COHERE_API_KEY` and `LANGSMITH_API_KEY` to generate real traces; see **How to run** below.
 
 ## What this monitors
 
-The script runs the **exact same classification prompt** used in the n8n workflow's `Classify via OpenAI` node (see [n8n/workflow.json](../n8n/workflow.json) and [n8n/workflow_documentation.md](../n8n/workflow_documentation.md)) against 5 worked examples — the same fault-code/symptom pairs documented in the n8n docs and drawn from [data/synthetic_fault_dataset.csv](../data/synthetic_fault_dataset.csv). Each call is traced via LangSmith's `@traceable` decorator and `wrap_openai`, so every classification decision produces a full trace: the exact system + user prompt sent, the raw model completion, latency, and token usage.
+The script runs the **exact same classification prompt** used in the n8n workflow's `Classify via Cohere` node (see [n8n/workflow.json](../n8n/workflow.json) and [n8n/workflow_documentation.md](../n8n/workflow_documentation.md)) against 5 worked examples — the same fault-code/symptom pairs documented in the n8n docs and drawn from [data/synthetic_fault_dataset.csv](../data/synthetic_fault_dataset.csv). Each call is traced via LangSmith's `@traceable` decorator (the Cohere call itself is logged as an `llm` run), so every classification decision produces a full trace: the exact system + user prompt sent, the raw model completion, latency, and token usage.
 
 It then does two more things a single trace can't show on its own:
 1. **Creates a LangSmith Dataset** (`heat-pump-fault-triage-eval-round1`) from the same 5 examples, with the expected category as the labeled output.
@@ -38,7 +38,7 @@ pip install -r ../requirements.txt
 python run_trace_sample.py
 ```
 
-The script loads `../.env` automatically (via `python-dotenv`), so set `OPENAI_API_KEY` and `LANGSMITH_API_KEY` there (and optionally `LANGSMITH_PROJECT`, which defaults to `heat-pump-copilot-round1`) rather than exporting them by hand — see [.env.example](../.env.example).
+The script loads `../.env` automatically (via `python-dotenv`), so set `COHERE_API_KEY` and `LANGSMITH_API_KEY` there (and optionally `LANGSMITH_PROJECT`, which defaults to `heat-pump-copilot-round1`) rather than exporting them by hand — see [.env.example](../.env.example).
 
 If `python3` on your machine resolves to a broken/old interpreter (symptom: `Killed: 9` on even `python3 --version`, common on Apple Silicon Macs with a stale Intel-only Python still first on `PATH`), point at a working interpreter explicitly, e.g. `/opt/anaconda3/bin/python3 run_trace_sample.py`.
 
@@ -46,7 +46,7 @@ The script prints each classification result as it runs, then a link to the Lang
 
 ## Limits — stated honestly
 
-- **Authored in an environment with no Python runtime or credentials** (same constraint noted for the Tableau and n8n builds), then **run and verified end-to-end** afterward with real `OPENAI_API_KEY` / `LANGSMITH_API_KEY` credentials — see the real dataset/experiment link above. Two real setup snags worth knowing if this is re-run elsewhere: (1) some Macs have a broken `python3` first on `PATH` (symptom: `Killed: 9` on even `python3 --version`) — point at a working interpreter explicitly if that happens; (2) LangSmith workspaces created in the **EU region** need `LANGSMITH_ENDPOINT=https://eu.api.smith.langchain.com` set explicitly, or every API call 403s even with a valid key (LangSmith's dashboard shows the right endpoint under the language/framework quickstart panel).
+- **Authored in an environment with no Python runtime or credentials** (same constraint noted for the Tableau and n8n builds), then **run and verified end-to-end** afterward with real `COHERE_API_KEY` / `LANGSMITH_API_KEY` credentials — see the real dataset/experiment link above. Two real setup snags worth knowing if this is re-run elsewhere: (1) some Macs have a broken `python3` first on `PATH` (symptom: `Killed: 9` on even `python3 --version`) — point at a working interpreter explicitly if that happens; (2) LangSmith workspaces created in the **EU region** need `LANGSMITH_ENDPOINT=https://eu.api.smith.langchain.com` set explicitly, or every API call 403s even with a valid key (LangSmith's dashboard shows the right endpoint under the language/framework quickstart panel).
 - **n=5 examples**, not the full 220-ticket synthetic dataset — enough to demonstrate the pattern and cover all three categories, not a statistically meaningful accuracy benchmark.
 - **Only the LLM half of the pipeline is traced.** The deterministic fault-code lookup path (which would handle the majority of real hardware_fault tickets cheaply, per [n8n/workflow_documentation.md](../n8n/workflow_documentation.md)) isn't an LLM call, so there's nothing for LangSmith to trace there — that path's "transparency" is just reading the lookup table directly.
 - **No real customer/installer data** — same public/synthetic-data constraint as the rest of Round 1 (see [data/dataset_documentation.md](../data/dataset_documentation.md)).

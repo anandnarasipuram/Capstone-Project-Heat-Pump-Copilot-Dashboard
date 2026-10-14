@@ -3,7 +3,7 @@ LangSmith monitoring sample — Heat Pump Field Commissioning & API/HEMS
 Connectivity Copilot (Round 1).
 
 Runs the *same* classification prompt used in the n8n workflow's
-"Classify via OpenAI" node (see ../n8n/workflow.json and
+"Classify via Cohere" node (see ../n8n/workflow.json and
 ../n8n/workflow_documentation.md) against a handful of worked examples,
 traced end-to-end in LangSmith so every classification decision is
 auditable: the exact prompt sent, the raw model output, latency, and
@@ -25,7 +25,8 @@ Usage:
 
     # Either put these in ../.env (repo root — this script loads it
     # automatically) or export them in your shell:
-    #   OPENAI_API_KEY=...
+    #   COHERE_API_KEY=...
+    #   COHERE_MODEL=command-a-03-2025               # optional, see default below
     #   LANGSMITH_API_KEY=...
     #   LANGSMITH_PROJECT=heat-pump-copilot-round1   # optional, see default below
 
@@ -39,29 +40,30 @@ from pathlib import Path
 
 try:
     from dotenv import load_dotenv
-    from openai import OpenAI
+    import cohere
     from langsmith import Client, traceable
-    from langsmith.wrappers import wrap_openai
     from langsmith.evaluation import evaluate
 except ImportError:
     sys.exit(
         "Missing dependencies. Run: pip install -r ../requirements.txt\n"
-        "(needs the `openai`, `langsmith`, and `python-dotenv` packages)"
+        "(needs the `cohere`, `langsmith`, and `python-dotenv` packages)"
     )
 
 # Load ../.env (the repo root's .env, relative to this script — works
 # regardless of the directory you run this from) before reading any keys.
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
-if not os.environ.get("OPENAI_API_KEY"):
-    sys.exit("Set OPENAI_API_KEY (in your environment or ../.env) before running this script.")
+if not os.environ.get("COHERE_API_KEY"):
+    sys.exit("Set COHERE_API_KEY (in your environment or ../.env) before running this script.")
 if not os.environ.get("LANGSMITH_API_KEY"):
     sys.exit("Set LANGSMITH_API_KEY (in your environment or ../.env) before running this script.")
 
 os.environ.setdefault("LANGSMITH_TRACING", "true")
 os.environ.setdefault("LANGSMITH_PROJECT", "heat-pump-copilot-round1")
 
-# Same system prompt as the n8n "Classify via OpenAI" HTTP Request node —
+COHERE_MODEL = os.environ.get("COHERE_MODEL", "command-a-03-2025")
+
+# Same system prompt as the n8n "Classify via Cohere" HTTP Request node —
 # kept in sync by hand; see CLASSIFY_SYSTEM_PROMPT in the workflow build.
 SYSTEM_PROMPT = """You are a triage assistant for a heat pump manufacturer's field installers in Germany. An installer has reported a symptom that has no recognized structured fault code, so you must classify it from free text.
 
@@ -132,16 +134,45 @@ EXAMPLES = [
     },
 ]
 
-oai_client = wrap_openai(OpenAI())
+co_client = cohere.ClientV2(api_key=os.environ["COHERE_API_KEY"])
 ls_client = Client()
 
 DATASET_NAME = "heat-pump-fault-triage-eval-round1"
 
 
+@traceable(
+    name="cohere_chat",
+    run_type="llm",
+    metadata={"ls_provider": "cohere", "ls_model_name": COHERE_MODEL},
+)
+def cohere_chat(messages: list[dict]) -> dict:
+    """One Cohere v2 Chat call, logged in LangSmith as an LLM run (prompt,
+    raw output, latency and token usage). LangSmith has no Cohere client
+    wrapper like wrap_openai, so the run is traced explicitly here."""
+    response = co_client.chat(
+        model=COHERE_MODEL,
+        response_format={"type": "json_object"},
+        messages=messages,
+    )
+    tokens = response.usage.tokens if response.usage else None
+    input_tokens = int(tokens.input_tokens or 0) if tokens else 0
+    output_tokens = int(tokens.output_tokens or 0) if tokens else 0
+    return {
+        "choices": [
+            {"message": {"role": "assistant", "content": response.message.content[0].text}}
+        ],
+        "usage_metadata": {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens,
+        },
+    }
+
+
 @traceable(name="classify_fault_report")
 def classify(inputs: dict) -> dict:
     """Send one ticket to the model and return its parsed classification.
-    Mirrors the n8n 'Classify via OpenAI' node's request shape exactly."""
+    Mirrors the n8n 'Classify via Cohere' node's request shape exactly."""
     user_content = (
         f"Model: {inputs['model']}\n"
         f"Firmware: {inputs['firmware_version']}\n"
@@ -149,15 +180,13 @@ def classify(inputs: dict) -> dict:
         f"Fault code: {inputs['fault_code'] or 'none'}\n"
         f"Reported symptom: {inputs['reported_symptom']}"
     )
-    response = oai_client.chat.completions.create(
-        model="gpt-4o-mini",
-        response_format={"type": "json_object"},
-        messages=[
+    response = cohere_chat(
+        [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_content},
-        ],
+        ]
     )
-    return json.loads(response.choices[0].message.content)
+    return json.loads(response["choices"][0]["message"]["content"])
 
 
 def run_manual_trace_pass():
@@ -233,7 +262,7 @@ def run_experiment():
 
 
 if __name__ == "__main__":
-    # OPENAI_API_KEY / LANGSMITH_API_KEY are already validated above, right
+    # COHERE_API_KEY / LANGSMITH_API_KEY are already validated above, right
     # after load_dotenv() — see the top of this file.
     run_manual_trace_pass()
     create_or_reuse_dataset()

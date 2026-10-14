@@ -20,7 +20,7 @@ Shape AI capstone project: **Heat Pump Copilot Dashboard** (Home Energy & HVAC s
 │   ├── workflow.json          # Exported n8n automation workflow
 │   └── workflow_documentation.md
 ├── langsmith/
-│   ├── run_trace_sample.py    # Traces the OpenAI classification step + runs a LangSmith experiment
+│   ├── run_trace_sample.py    # Traces the Cohere classification step + runs a LangSmith experiment
 │   └── monitoring_notes.md    # What's monitored, why it matters, how to run
 ├── cost_estimation/
 │   ├── cost_analysis.md       # Build + run cost breakdown
@@ -37,7 +37,7 @@ Shape AI capstone project: **Heat Pump Copilot Dashboard** (Home Energy & HVAC s
 
 ## Status
 
-In progress. Done: research pack (sector research, opportunities/risks, 3 candidate use cases spanning reactive/preventive/predictive lifecycle stages, preliminary analysis), dataset selection + synthetic fault dataset, cost/timeline estimate, Tableau dashboard (5 market-context sheets + 7 stakeholder operations-metrics sheets), one-page pitch brief for instructor review, n8n fault-triage POC on Telegram (deterministic lookup — now including 8 real Vaillant fault codes — plus OpenAI classification fallback grounded in a manual knowledge base, see `data/manuals/`), LangSmith monitoring sample (trace script + dataset/experiment, run and verified end-to-end — 5/5 classifications correct, real experiment link in langsmith/monitoring_notes.md). Presentation deck (`presentation/Heat_Pump_Copilot_Dashboard_Round1.pptx`) is in. Pending: live import/test of the n8n workflow against a real Telegram bot, and the post-presentation `feedback/round1_decision.md`.
+In progress. Done: research pack (sector research, opportunities/risks, 3 candidate use cases spanning reactive/preventive/predictive lifecycle stages, preliminary analysis), dataset selection + synthetic fault dataset, cost/timeline estimate, Tableau dashboard (5 market-context sheets + 7 stakeholder operations-metrics sheets), one-page pitch brief for instructor review, n8n fault-triage POC on Telegram (deterministic lookup — now including 8 real Vaillant fault codes — plus Cohere classification fallback grounded in a manual knowledge base, see `data/manuals/`), LangSmith monitoring sample (trace script + dataset/experiment, run and verified end-to-end — 5/5 classifications correct, real experiment link in langsmith/monitoring_notes.md). Presentation deck (`presentation/Heat_Pump_Copilot_Dashboard_Round1.pptx`) is in. Pending: live import/test of the n8n workflow against a real Telegram bot, and the post-presentation `feedback/round1_decision.md`.
 
 ## Setup
 
